@@ -131,7 +131,7 @@ def train():
     video_dirs = find_video_dirs("data")
 
     # Create a dataset for each video and combine them
-    datasets = [SDDPairs(v, hist_len=4) for v in video_dirs]
+    datasets = [SDDPairs(v, hist_len=10) for v in video_dirs]
     ds = ConcatDataset(datasets)
     loader = DataLoader(ds, batch_size=512, shuffle=False, num_workers=4, pin_memory=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"

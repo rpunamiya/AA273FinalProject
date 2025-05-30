@@ -10,7 +10,7 @@ VIDEO_DIR  = r"C:\Users\rpuna\OneDrive - Stanford\Spring 2025\AA 273\AA273FinalP
 CHECKPOINT = "noise_model_sdd.pt"
 N_STEPS    = 500   # How many steps ahead to roll out
 DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
-tid = 4 # <-- change this to select a different track_id
+tid = 1 # <-- change this to select a different track_id
 # ------------------------------------
 
 COLS = ["track_id","xmin","ymin","xmax","ymax",
