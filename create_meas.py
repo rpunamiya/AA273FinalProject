@@ -27,7 +27,7 @@ def create_measurements(df):
     cx, cy = np.array(df["cx"]), np.array(df["cy"]) 
     y = np.vstack([cx, cy])
     y_noisy = y.T + np.random.multivariate_normal(np.zeros(2), Q, size=y.shape[1])
-    pdb.set_trace()
+    # pdb.set_trace()
     return y_noisy
 
 create_measurements(df)

@@ -6,13 +6,15 @@ from matplotlib.patches import Ellipse
 from filterpy.kalman import UnscentedKalmanFilter, MerweScaledSigmaPoints
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib.animation as animation
+from create_meas import *
 
 # ---------- Configuration ----------
-VIDEO_DIR  = r"C:\Users\rpuna\OneDrive - Stanford\Spring 2025\AA 273\AA273FinalProject\data\quad\video0"
+VIDEO_DIR  = r"C:\Users\rpuna\OneDrive - Stanford\Spring 2025\AA 273\AA273FinalProject\data\coupa\video1"
 CHECKPOINT = "noise_model_sdd.pt"
-TRACK_ID   = 6      # choose a pedestrian id present in this video
+TRACK_ID   = 1      # choose a pedestrian id present in this video
 N_STEPS    = 500    # max rollout horizon
-HIST_LEN   = 4      # must match training
+HIST_LEN   = 10      # must match training
 DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
 # ------------------------------------
 
@@ -119,11 +121,15 @@ def make_ukf(init_x):
     return ukf
 
 # ---------- Roll-out with UKF -----------------------------------------
-seq = torch.tensor(traj[:HIST_LEN], device=DEVICE).unsqueeze(0)  # (1,T,2)
+y = create_measurements(df)
+y = y.astype(np.float32)  # ensure float32 for consistency
+seq = torch.tensor(y[:HIST_LEN], device=DEVICE).unsqueeze(0)  # (1,T,2)
 gt, ukf_mu, ukf_P = [traj[HIST_LEN-1]], [], []
 ukf = make_ukf(traj[HIST_LEN-1])
 
 for step in range(HIST_LEN, min(HIST_LEN+N_STEPS, len(traj)-1)):
+    # start_time = time.time()
+
     with torch.no_grad():
         mu_torch, Q_torch = model(seq)
     mu = mu_torch.squeeze(0).cpu().numpy()
@@ -133,27 +139,82 @@ for step in range(HIST_LEN, min(HIST_LEN+N_STEPS, len(traj)-1)):
     ukf.fx = lambda x,dt,d=mu-ukf.x: fx(x,dt,d)
     ukf.predict()
 
-    z = traj[step+1]                    # perfect measurement
+    z = y[step+1]                    # perfect measurement
     ukf.update(z)
 
     ukf_mu.append(ukf.x.copy())
     ukf_P.append(ukf.P.copy())
-    gt.append(z)
+    gt.append(traj[step+1])
 
     new = torch.tensor(ukf.x, dtype=torch.float32, device=DEVICE).unsqueeze(0).unsqueeze(0)
     seq = torch.cat([seq[:,1:], new], dim=1)
 
+    # end_time = time.time()
+    # print(f"Step {step-HIST_LEN+1}: UKF update took {end_time - start_time:.4f} seconds")
+
 gt      = np.array(gt)
 ukf_mu  = np.array(ukf_mu)
 
+# ---------- Compute and Print Error -----------------------------------
+errors = np.linalg.norm(ukf_mu - gt[1:], axis=1)  # Skip first gt which was initial
+rmse = np.sqrt(np.mean(errors**2))
+final_error = errors[-1]
+
+# print(f"RMSE over rollout: {rmse:.2f} pixels")
+# print(f"Final frame error: {final_error:.2f} pixels")
+# # Print difference between UKF and ground truth for all frames
+# diff = np.linalg.norm(ukf_mu - gt[1:], axis=1)
+# print("Frame-wise differences (UKF vs GT):")
+# for i, d in enumerate(diff):
+#     print(f"Frame {i+1}: {d:.2f} pixels")
+# # Print final ground truth and UKF position
+# print(f"Final GT position: {gt[-1]}")
+# print(f"Final UKF position: {ukf_mu[-1]}")
+
 # ---------- Plot -------------------------------------------------------
-fig, ax = plt.subplots(figsize=(6,6))
-ax.plot(ukf_mu[:,0], ukf_mu[:,1], 's--', label="UKF fused", color="blue")
-ax.plot(gt[:,0],     gt[:,1], 'o-', label="Ground Truth",  color="green")
+# fig, ax = plt.subplots(figsize=(6,6))
+# ax.plot(ukf_mu[:,0], ukf_mu[:,1], 's--', label="UKF fused", color="blue")
+# ax.plot(gt[:,0],     gt[:,1], 'o-', label="Ground Truth",  color="green")
 
-# for m,P in zip(ukf_mu, ukf_P):
-#     plot_cov_ellipse(P, m, ax, n_std=2.0, alpha=0.2, color="blue")
+# # for m,P in zip(ukf_mu, ukf_P):
+# #     plot_cov_ellipse(P, m, ax, n_std=2.0, alpha=0.2, color="blue")
 
-ax.set_title(f"UKF fusion – Track {TRACK_ID}")
-ax.set_xlabel("x [px]"); ax.set_ylabel("y [px]")
-ax.axis("equal"); ax.grid(True); ax.legend(); plt.tight_layout(); plt.show()
+# ax.set_title(f"UKF fusion – Track {TRACK_ID}")
+# ax.set_xlabel("x [px]"); ax.set_ylabel("y [px]")
+# ax.axis("equal"); ax.grid(True); ax.legend(); plt.tight_layout(); plt.show()
+
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.set_xlim(min(gt[:, 0].min(), ukf_mu[:, 0].min()) - 10, max(gt[:, 0].max(), ukf_mu[:, 0].max()) + 10)
+ax.set_ylim(min(gt[:, 1].min(), ukf_mu[:, 1].min()) - 10, max(gt[:, 1].max(), ukf_mu[:, 1].max()) + 10)
+ax.set_title(f"UKF Fusion – Track {TRACK_ID}")
+ax.set_xlabel("x [px]")
+ax.set_ylabel("y [px]")
+ax.grid(True)
+ax.set_aspect("equal")
+
+gt_line, = ax.plot([], [], 'o-', color='green', label="Ground Truth", markersize=1)
+ukf_line, = ax.plot([], [], 's--', color='blue', label="UKF Fused", markersize=1)
+gt_scatter = ax.scatter([], [], color='green', s=2)
+ukf_scatter = ax.scatter([], [], color='blue', s=2)
+
+ax.legend()
+
+def init():
+    gt_line.set_data([], [])
+    ukf_line.set_data([], [])
+    gt_scatter.set_offsets(np.empty((0, 2)))
+    ukf_scatter.set_offsets(np.empty((0, 2)))
+    return gt_line, ukf_line, gt_scatter, ukf_scatter
+
+def update(frame):
+    gt_line.set_data(gt[:frame+1, 0], gt[:frame+1, 1])
+    ukf_line.set_data(ukf_mu[:frame+1, 0], ukf_mu[:frame+1, 1])
+    gt_scatter.set_offsets(gt[frame])
+    ukf_scatter.set_offsets(ukf_mu[frame])
+    return gt_line, ukf_line, gt_scatter, ukf_scatter
+
+ani = animation.FuncAnimation(fig, update, frames=len(ukf_mu),
+                              init_func=init, blit=False, interval=50, repeat=False)
+
+plt.tight_layout()
+plt.show()
